@@ -103,9 +103,8 @@ final class GCEventStore: NSObject,
             }
         }
 
-        // request scopes we need
+        // request scopes we need (email scope omitted - work accounts often block it)
         let scopes = [
-            "email",
             "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
             "https://www.googleapis.com/auth/calendar.events.readonly"
         ]
@@ -135,7 +134,7 @@ final class GCEventStore: NSObject,
                 if let state {
                     self.authState = state    // didSet handles persistence & delegates
                     self.userEmail = state.userEmail
-                    sendNotification("Google Account connected", "\(self.userEmail ?? "") is connected")
+                    sendNotification("Google Calendar connected", self.userEmail ?? "Account connected")
                     cont.resume()
                 } else {
                     cont.resume(throwing: error ?? NSError(domain: "GoogleSignIn", code: 1))
@@ -173,6 +172,9 @@ final class GCEventStore: NSObject,
         let url = URL(string: "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250&showHidden=true")!
         let items = try await fetchJSON(url)
 
+        // Use email if available, otherwise find primary calendar ID (typically user's email)
+        let sourceName: String? = userEmail ?? items.first(where: { $0["primary"] as? Bool == true })?["id"] as? String
+
         return items.compactMap { item -> MBCalendar? in
             guard let title = item["summary"] as? String,
                   let calendarID = item["id"] as? String,
@@ -180,7 +182,7 @@ final class GCEventStore: NSObject,
 
             return MBCalendar(title: title,
                               id: calendarID,
-                              source: userEmail,
+                              source: sourceName,
                               email: userEmail,
                               color: hexStringToUIColor(hex: backgroundColor))
         }
