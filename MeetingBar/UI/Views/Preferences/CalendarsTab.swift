@@ -70,7 +70,9 @@ struct ProviderPicker: View {
         HStack {
             Picker("", selection: $picker) {
                 Text("access_screen_provider_macos_title".loco()).tag(EventStoreProvider.macOSEventKit)
-                Text("Google Calendar API").tag(EventStoreProvider.googleCalendar)
+                if GCEventStore.isConfigured {
+                    Text("Google Calendar API").tag(EventStoreProvider.googleCalendar)
+                }
             }
             .onChange(of: picker) { provider in
                 Task { await eventManager.changeEventStoreProvider(provider) }

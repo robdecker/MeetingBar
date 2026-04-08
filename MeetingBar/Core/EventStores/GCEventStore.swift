@@ -19,6 +19,8 @@ extension OIDServiceConfiguration: @unchecked @retroactive Sendable {}
 enum AuthError: Error {
     case notSignedIn
     case refreshFailed
+    case notConfigured
+    case calendarAccessDenied(String)  // calendar ID
 }
 
 extension OIDAuthState {
@@ -54,6 +56,11 @@ final class GCEventStore: NSObject,
     private static let kClientSecret = googleClientSecret
     private static let kRedirectURI  = "com.googleusercontent.apps.\(googleClientNumber):/oauthredirect"
     private static let kKeychainName = googleAuthKeychainName
+
+    /// Returns true if Google OAuth credentials are properly configured
+    static var isConfigured: Bool {
+        URL(string: kRedirectURI) != nil
+    }
 
     // MARK: Stored properties
     @MainActor var currentAuthorizationFlow: OIDExternalUserAgentSession?
@@ -96,6 +103,12 @@ final class GCEventStore: NSObject,
         // if already authorised, nothing to do
         if authState?.isAuthorized == true { return }
 
+        // validate redirect URL (catches unconfigured placeholder values)
+        guard let redirectURL = URL(string: Self.kRedirectURI) else {
+            sendNotification("Google Calendar Error", "OAuth not configured. Set GOOGLE_CLIENT_NUMBER in xcconfig.")
+            throw AuthError.notConfigured
+        }
+
         // discover configuration for Google issuer
         let config = try await withCheckedThrowingContinuation { cont in
             OIDAuthorizationService.discoverConfiguration(forIssuer: URL(string: Self.kIssuer)!) { cfg, err in
@@ -122,7 +135,7 @@ final class GCEventStore: NSObject,
             clientId: Self.kClientID,
             clientSecret: Self.kClientSecret,
             scopes: scopes,
-            redirectURL: URL(string: Self.kRedirectURI)!,
+            redirectURL: redirectURL,
             responseType: OIDResponseTypeCode,
             additionalParameters: extra
         )
@@ -214,8 +227,12 @@ final class GCEventStore: NSObject,
         try await ensureSignedIn()
         var result: [MBEvent] = []
         for cal in calendars {
-            let ev = try await getCalendarEventsForDateRange(calendar: cal, dateFrom: from, dateTo: to)
-            result.append(contentsOf: ev)
+            do {
+                let ev = try await getCalendarEventsForDateRange(calendar: cal, dateFrom: from, dateTo: to)
+                result.append(contentsOf: ev)
+            } catch AuthError.calendarAccessDenied {
+                continue
+            }
         }
         return result
     }
@@ -318,13 +335,23 @@ final class GCEventStore: NSObject,
 
         if let http = response as? HTTPURLResponse {
             switch http.statusCode {
-            case 401, 403:
+            case 401:
                 if !retrying {
-                    // force-refresh and retry
                     _ = try await validAccessToken(forceRefresh: true)
                     return try await fetchJSON(url, retrying: true)
                 }
-                // refresh token revoked – force re‑login
+                clearAuthState()
+                throw AuthError.notSignedIn
+            case 403:
+                let body = String(data: data, encoding: .utf8) ?? ""
+                // Permission issue on a specific calendar, not an auth failure
+                if body.contains("insufficientPermissions") || body.contains("ACCESS_TOKEN_SCOPE_INSUFFICIENT") {
+                    throw AuthError.calendarAccessDenied(url.path)
+                }
+                if !retrying {
+                    _ = try await validAccessToken(forceRefresh: true)
+                    return try await fetchJSON(url, retrying: true)
+                }
                 clearAuthState()
                 throw AuthError.notSignedIn
             case 200...299:
@@ -335,7 +362,7 @@ final class GCEventStore: NSObject,
         }
 
         let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-        return root["items"] as! [[String: Any]]
+        return root["items"] as? [[String: Any]] ?? []
     }
 
     private func revoke(token: String) async throws {

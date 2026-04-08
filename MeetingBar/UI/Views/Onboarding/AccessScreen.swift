@@ -39,19 +39,21 @@ struct AccessScreen: View {
                             }
                         }.frame(width: 200, height: 50)
                     }
-                    VStack(spacing: 10) {
-                        List {
-                            Section(header: Text("Google Calendar API").font(.headline)) {
-                                Text("access_screen_provider_gcalendar_data_source".loco())
-                                Text("access_screen_provider_gcalendar_number_of_accounts".loco())
+                    if GCEventStore.isConfigured {
+                        VStack(spacing: 10) {
+                            List {
+                                Section(header: Text("Google Calendar API").font(.headline)) {
+                                    Text("access_screen_provider_gcalendar_data_source".loco())
+                                    Text("access_screen_provider_gcalendar_number_of_accounts".loco())
+                                }
                             }
+                            Spacer()
+                            VStack {
+                                Button(action: { Task { await requestAccess(provider: .googleCalendar) }}, label: {
+                                    Image("googleSignInButton").resizable().aspectRatio(contentMode: .fit).frame(width: 150)
+                                }).buttonStyle(PlainButtonStyle())
+                            }.frame(width: 200, height: 50)
                         }
-                        Spacer()
-                        VStack {
-                            Button(action: { Task { await requestAccess(provider: .googleCalendar) }}, label: {
-                                Image("googleSignInButton").resizable().aspectRatio(contentMode: .fit).frame(width: 150)
-                            }).buttonStyle(PlainButtonStyle())
-                        }.frame(width: 200, height: 50)
                     }
                 }
             } else {

@@ -34,13 +34,21 @@ public class EventManager: ObservableObject {
 
     public init(refreshInterval: TimeInterval = 180) async {
         self.refreshInterval = refreshInterval
+
+        // Fall back to macOS Calendar if Google Calendar was selected but isn't configured
+        var selectedProvider = Defaults[.eventStoreProvider]
+        if selectedProvider == .googleCalendar && !GCEventStore.isConfigured {
+            selectedProvider = .macOSEventKit
+            Defaults[.eventStoreProvider] = selectedProvider
+        }
+
         provider = await MainActor.run {
-            switch Defaults[.eventStoreProvider] {
+            switch selectedProvider {
             case .macOSEventKit: return EKEventStore.shared
             case .googleCalendar: return GCEventStore.shared
             }
         }
-        await configureProvider(Defaults[.eventStoreProvider])
+        await configureProvider(selectedProvider)
         setupPublishers()
         refreshSubject.send() // initial load
     }
